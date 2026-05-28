@@ -1,5 +1,15 @@
 # Change Log
 
+## [0.0.32] - 2026-05-28
+
+### 移除商业授权脚手架（全开源）
+
+- 删除 `CommercialLicense.cs`（机器码、RSA license 校验、`commercial.lock` 启动拦截）及 `Program.cs` 中的三处调用。
+- 删除 `CliOptions` 的 `--license-machine-code` / `--license-check` 两个 CLI 标志及其属性。
+- 仓库本就是 MIT、无 `commercial.lock`（公开版一直免 license 运行）；本次彻底移除商业授权代码，仓库纯开源、无歧义。
+- 重建 V20/V21 exe（0 错误，`serverVersion=0.0.32`）。
+- 注：`CommercialReadinessGateBuilder`（发布质检报告生成器，非授权）保留不动。
+
 ## [0.0.31] - 2026-05-28
 
 ### 版本能力层（Capability layer）

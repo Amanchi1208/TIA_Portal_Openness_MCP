@@ -110,8 +110,6 @@ namespace TiaMcpServer
         public string? ProjectDirectory { get; set; }
         public string? ProjectName { get; set; }
         public int? TiaStepTimeoutSeconds { get; set; }
-        public bool LicenseMachineCode { get; set; }
-        public bool LicenseCheck { get; set; }
 
         public static CliOptions ParseArgs(string[] args)
         {
@@ -717,14 +715,6 @@ namespace TiaMcpServer
                             options.TiaStepTimeoutSeconds = stepTimeoutSeconds;
                             i++;
                         }
-                        break;
-
-                    case "--license-machine-code":
-                        options.LicenseMachineCode = true;
-                        break;
-
-                    case "--license-check":
-                        options.LicenseCheck = true;
                         break;
 
                     case "--transport":

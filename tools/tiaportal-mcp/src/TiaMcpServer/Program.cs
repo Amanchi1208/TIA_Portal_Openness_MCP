@@ -88,22 +88,6 @@ namespace TiaMcpServer
                 // 这里只注册程序集解析器，不初始化 Openness，也不连接或打开 TIA 项目。
                 AppDomain.CurrentDomain.AssemblyResolve += Engineering.Resolver;
 
-                if (options.LicenseMachineCode)
-                {
-                    CommercialLicense.PrintMachineCode(Console.Out);
-                    return;
-                }
-
-                if (options.LicenseCheck)
-                {
-                    var license = CommercialLicense.ValidateLicense();
-                    Console.WriteLine(license.Message);
-                    if (!license.Ok) Environment.ExitCode = 2;
-                    return;
-                }
-
-                CommercialLicense.EnsureValidForCommercialRun();
-
                 if (options.AnalyzeReferenceAssets)
                 {
                     RunAnalyzeReferenceAssets(options);

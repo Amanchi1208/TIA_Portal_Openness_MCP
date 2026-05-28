@@ -1,4 +1,4 @@
-# TIA Portal MCP 完整交付包（**v0.0.31** / V20+V21 + S7DCL）
+# TIA Portal MCP 完整交付包（**v0.0.32** / V20+V21 + S7DCL）
 
 [English](README.en.md) · **中文**
 
