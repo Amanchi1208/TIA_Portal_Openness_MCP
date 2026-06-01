@@ -455,6 +455,9 @@ namespace TiaMcpServer.ModelContextProtocol
         public IEnumerable<string>? ImportedBlocks { get; set; }
         public IEnumerable<ImportFailure>? Failed { get; set; }
         public ResponseCompile? Compile { get; set; }
+        public string? CapabilityDecision { get; set; }
+        public IEnumerable<string>? CapabilityWarnings { get; set; }
+        public IEnumerable<string>? RecommendedNextActions { get; set; }
     }
 
     public class ResponsePlcProgramExport : ResponseMessage

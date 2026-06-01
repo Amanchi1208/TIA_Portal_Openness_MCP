@@ -1,4 +1,4 @@
-# TIA Portal MCP Server (v0.0.36 · V20 + V21 · S7DCL)
+# TIA Portal MCP Server (v0.0.39 · V20 + V21 · S7DCL)
 
 **English** · [中文](README.md)
 
@@ -22,6 +22,11 @@ to run.
 
 ## Highlights
 
+- **Stability-first public generation (v0.0.39).** `PlcBuildAndImport` now returns
+  `CapabilityDecision`, `CapabilityWarnings`, and `RecommendedNextActions`;
+  `ApplyUnifiedHmiScreenDesignJson(strict=true)` fails when any HMI property write
+  fails; `EnsureUnifiedHmiTag(requireVerifiedBinding=true)` requires readback as
+  `SymbolicVerified` or `AbsoluteVerified`.
 - **Dual-version support (V20 + V21).** Two separate executables, not
   interchangeable: V21 binds the split DLLs (`Siemens.Engineering.Base/Step7/…`),
   V20 binds the monolithic `Siemens.Engineering.dll`.

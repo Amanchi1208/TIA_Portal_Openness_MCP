@@ -5557,7 +5557,7 @@ namespace TiaMcpServer.Siemens
             }
         }
 
-        public ResponseMessage EnsureUnifiedHmiTag(string hmiSoftwarePath, string tagTableName, string tagName, string hmiDataType = "Bool", string plcName = "PLC_1", string plcTag = "", string connectionName = "", string address = "")
+        public ResponseMessage EnsureUnifiedHmiTag(string hmiSoftwarePath, string tagTableName, string tagName, string hmiDataType = "Bool", string plcName = "PLC_1", string plcTag = "", string connectionName = "", string address = "", bool requireVerifiedBinding = true)
         {
             return RunHmiStepTool("EnsureUnifiedHmiTag", meta =>
             {
@@ -5586,8 +5586,18 @@ namespace TiaMcpServer.Siemens
                 meta["requestedPlcTag"] = targetPlcTag;
                 meta["requestedAddress"] = address ?? string.Empty;
                 meta["writeResults"] = writeResults;
-                meta["readback"] = SummarizeHmiObjectReadback(tag, "Connection", "AccessMode", "AddressAccessMode", "TagType", "PlcName", "ControllerName", "Station", "PlcTag", "ControllerTag", "ControllerTagName", "Address", "LogicalAddress", "ProcessValueAddress", "RuntimeAddress", "ControllerAddress", "ControllerTagAddress", "ExternalAddress", "PlcAddress", "PLCAddress", "TagAddress", "AbsoluteAddress", "DataType", "HmiDataType");
-                return $"HMI tag '{tagName}' {action}.";
+                var binding = ClassifyUnifiedHmiTagBinding(tag, connectionName, targetPlcTag, address ?? string.Empty);
+                meta["readback"] = binding.Readback;
+                meta["bindingStatus"] = binding.Status;
+                meta["bindingVerified"] = binding.Verified;
+                meta["bindingGuidance"] = binding.Guidance;
+                meta["requireVerifiedBinding"] = requireVerifiedBinding;
+                if (requireVerifiedBinding && !binding.Verified)
+                {
+                    throw new InvalidOperationException($"HMI tag '{tagName}' binding is not verified. Status={binding.Status}; {binding.Guidance}; Readback={binding.Readback}");
+                }
+
+                return $"HMI tag '{tagName}' {action}. Binding={binding.Status}.";
             });
         }
 
@@ -5659,7 +5669,7 @@ namespace TiaMcpServer.Siemens
             });
         }
 
-        public ResponseMessage ApplyUnifiedHmiScreenDesignJson(string hmiSoftwarePath, string screenName, string designJson)
+        public ResponseMessage ApplyUnifiedHmiScreenDesignJson(string hmiSoftwarePath, string screenName, string designJson, bool strict = true)
         {
             return RunHmiStepTool("ApplyUnifiedHmiScreenDesignJson", meta =>
             {
@@ -5718,7 +5728,7 @@ namespace TiaMcpServer.Siemens
 
                         if (itemNode["properties"] is JsonObject props)
                         {
-                            ApplyJsonProperties(item, props, failed, name!);
+                            ApplyJsonProperties(item, props, failed, name!, typeHint ?? string.Empty);
                         }
 
                         var text = JsonString(itemNode, "text");
@@ -5763,6 +5773,11 @@ namespace TiaMcpServer.Siemens
 
                 meta["changed"] = changed;
                 meta["failed"] = failed;
+                meta["strict"] = strict;
+                if (strict && failed.Count > 0)
+                {
+                    throw new InvalidOperationException($"Unified HMI design apply had {failed.Count} failed writes: {string.Join(" | ", failed.Select(x => x?.ToString() ?? string.Empty))}");
+                }
                 return $"Applied Unified HMI design to '{screenName}'. changed={changed.Count}, failed={failed.Count}.";
             });
         }
@@ -6726,6 +6741,95 @@ namespace TiaMcpServer.Siemens
             return string.Join("; ", parts);
         }
 
+        private sealed class UnifiedHmiTagBindingReadback
+        {
+            public string Status { get; set; } = "Failed";
+            public bool Verified { get; set; }
+            public string Readback { get; set; } = string.Empty;
+            public string Guidance { get; set; } = string.Empty;
+        }
+
+        private static UnifiedHmiTagBindingReadback ClassifyUnifiedHmiTagBinding(object tag, string connectionName, string plcTag, string address)
+        {
+            string Attr(params string[] names)
+            {
+                foreach (var name in names)
+                {
+                    try
+                    {
+                        var prop = tag.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                        if (prop != null && prop.CanRead)
+                        {
+                            var v = prop.GetValue(tag)?.ToString();
+                            if (!string.IsNullOrWhiteSpace(v)) return v!;
+                        }
+                    }
+                    catch { }
+
+                    try
+                    {
+                        var v = TryGetEngineeringAttribute(tag, name)?.ToString();
+                        if (!string.IsNullOrWhiteSpace(v)) return v!;
+                    }
+                    catch { }
+                }
+
+                return string.Empty;
+            }
+
+            var readback = SummarizeHmiObjectReadback(tag, "Connection", "AccessMode", "AddressAccessMode", "TagType", "PlcName", "ControllerName", "Station", "PlcTag", "ControllerTag", "ControllerTagName", "Address", "LogicalAddress", "ProcessValueAddress", "RuntimeAddress", "ControllerAddress", "ControllerTagAddress", "ExternalAddress", "PlcAddress", "PLCAddress", "TagAddress", "AbsoluteAddress", "DataType", "HmiDataType");
+            var connection = Attr("Connection", "ConnectionName");
+            var accessMode = Attr("AccessMode", "AddressAccessMode");
+            var symbol = Attr("PlcTag", "ControllerTag", "ControllerTagName");
+            var runtimeAddress = Attr("Address", "LogicalAddress", "ProcessValueAddress", "RuntimeAddress", "ControllerAddress", "ControllerTagAddress", "ExternalAddress", "PlcAddress", "PLCAddress", "TagAddress", "AbsoluteAddress");
+            var requestedAddress = (address ?? string.Empty).Trim();
+            var requestedSymbol = NormalizeControllerTagName(plcTag ?? string.Empty);
+            var expectedConnection = (connectionName ?? string.Empty).Trim();
+
+            var connectionOk = string.IsNullOrWhiteSpace(expectedConnection) ||
+                string.Equals(connection, expectedConnection, StringComparison.OrdinalIgnoreCase);
+            var absoluteOk = !string.IsNullOrWhiteSpace(requestedAddress) &&
+                connectionOk &&
+                string.Equals(runtimeAddress, requestedAddress, StringComparison.OrdinalIgnoreCase);
+            var symbolicOk = !string.IsNullOrWhiteSpace(requestedSymbol) &&
+                connectionOk &&
+                string.Equals(NormalizeControllerTagName(symbol), requestedSymbol, StringComparison.OrdinalIgnoreCase) &&
+                accessMode.IndexOf("Symbol", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (symbolicOk)
+            {
+                return new UnifiedHmiTagBindingReadback
+                {
+                    Status = "SymbolicVerified",
+                    Verified = true,
+                    Readback = readback,
+                    Guidance = "PLC symbolic HMI tag binding read back successfully."
+                };
+            }
+
+            if (absoluteOk)
+            {
+                return new UnifiedHmiTagBindingReadback
+                {
+                    Status = "AbsoluteVerified",
+                    Verified = true,
+                    Readback = readback,
+                    Guidance = "Absolute-address HMI tag binding read back successfully."
+                };
+            }
+
+            var status = string.IsNullOrWhiteSpace(connection) || connection.IndexOf("internal", StringComparison.OrdinalIgnoreCase) >= 0 || connection.IndexOf("内部", StringComparison.OrdinalIgnoreCase) >= 0
+                ? "InternalOnly"
+                : "Unverified";
+            return new UnifiedHmiTagBindingReadback
+            {
+                Status = status,
+                Verified = false,
+                Readback = readback,
+                Guidance = "Pass connectionName plus a verified PLC symbol or absolute address, then read back Connection/AccessMode/PlcTag/Address. Internal HMI tags are not accepted by the stable project-generation path."
+            };
+        }
+
         private static string NormalizeControllerTagName(string tagName)
         {
             if (string.IsNullOrWhiteSpace(tagName)) return string.Empty;
@@ -7142,15 +7246,56 @@ namespace TiaMcpServer.Siemens
             }
         }
 
-        private static void ApplyJsonProperties(object target, JsonObject props, JsonArray failed, string path)
+        private static void ApplyJsonProperties(object target, JsonObject props, JsonArray failed, string path, string typeHint = "")
         {
             foreach (var kv in props)
             {
+                var schemaError = ValidateUnifiedHmiDesignProperty(typeHint, kv.Key);
+                if (!string.IsNullOrEmpty(schemaError))
+                {
+                    failed.Add($"{path}.{kv.Key}: {schemaError}");
+                    continue;
+                }
+
                 var value = JsonObjectValue(kv.Value);
                 if (TrySetProperty(target, kv.Key, value)) continue;
                 if (TrySetEngineeringAttribute(target, kv.Key, value)) continue;
                 failed.Add($"{path}.{kv.Key}: property/attribute write failed");
             }
+        }
+
+        private static string ValidateUnifiedHmiDesignProperty(string typeHint, string propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName)) return "property name is empty";
+            var type = (typeHint ?? string.Empty).Trim();
+            var prop = propertyName.Trim();
+
+            if (type.Equals("Rectangle", StringComparison.OrdinalIgnoreCase) ||
+                type.Equals("Lamp", StringComparison.OrdinalIgnoreCase) ||
+                type.Equals("HmiRectangle", StringComparison.OrdinalIgnoreCase))
+            {
+                if (prop.Equals("ForeColor", StringComparison.OrdinalIgnoreCase) ||
+                    prop.Equals("Text", StringComparison.OrdinalIgnoreCase) ||
+                    prop.Equals("Font", StringComparison.OrdinalIgnoreCase) ||
+                    prop.Equals("Content", StringComparison.OrdinalIgnoreCase) ||
+                    prop.Equals("Padding", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "unsupported on Rectangle. Use a separate HmiText item for text/foreground/font, and keep Rectangle for BackColor/BorderColor/BorderWidth.";
+                }
+            }
+
+            if (type.Equals("IOField", StringComparison.OrdinalIgnoreCase) ||
+                type.Equals("HmiIOField", StringComparison.OrdinalIgnoreCase))
+            {
+                var stable = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "BackColor", "ForeColor", "BorderColor", "BorderWidth", "Visible", "Enabled", "Name"
+                };
+                if (!stable.Contains(prop))
+                    return "not in the stable IOField property set for generated screens. Bind runtime values with BindUnifiedHmiTagDynamization instead of ad-hoc ProcessValue properties.";
+            }
+
+            return string.Empty;
         }
 
         private static bool TrySetEngineeringAttribute(object target, string attributeName, object? value)

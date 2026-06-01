@@ -2506,8 +2506,7 @@ namespace TiaMcpServer
                             {
                                 ["BackColor"] = "0xFFDCFCE7",
                                 ["BorderColor"] = "0xFF86EFAC",
-                                ["BorderWidth"] = 1,
-                                ["ForeColor"] = "0xFF166534"
+                                ["BorderWidth"] = 1
                             }),
                             Item("Text", "Lamp_Run_Text", 470, 176, 64, 20, "RUN", new JsonObject
                             {
@@ -2527,8 +2526,7 @@ namespace TiaMcpServer
                             {
                                 ["BackColor"] = "0xFFFEE2E2",
                                 ["BorderColor"] = "0xFFFCA5A5",
-                                ["BorderWidth"] = 1,
-                                ["ForeColor"] = "0xFFB91C1C"
+                                ["BorderWidth"] = 1
                             }),
                             Item("Text", "Lamp_Fault_Text", 626, 176, 88, 20, "FAULT", new JsonObject
                             {
@@ -2572,9 +2570,6 @@ namespace TiaMcpServer
                                 ["BackColor"] = "0xFFF8FAFC",
                                 ["BorderColor"] = "0xFFE5E7EB",
                                 ["BorderWidth"] = 1
-                            }, new JsonObject
-                            {
-                                ["Size"] = 11
                             }),
                             Item("Text", "FooterText", 40, 422, 720, 18, "Bindings: START, STOP, RUN, FAULT, COUNTER", new JsonObject
                             {
@@ -3864,7 +3859,7 @@ namespace TiaMcpServer
 
                 root["ensureScreen"] = ResponseMessageToJson(McpServer.EnsureUnifiedHmiScreen(hmiSoftwarePath, screenName, 800, 480));
                 root["ensureTagTable"] = ResponseMessageToJson(McpServer.EnsureUnifiedHmiTagTable(hmiSoftwarePath, tagTableName));
-                root["ensureTag"] = ResponseMessageToJson(McpServer.EnsureUnifiedHmiTag(hmiSoftwarePath, tagTableName, tagName, "Bool", "", tagName, ""));
+                root["ensureTag"] = ResponseMessageToJson(McpServer.EnsureUnifiedHmiTag(hmiSoftwarePath, tagTableName, tagName, "Bool", "", tagName, "", "", false));
                 root["ensureButton"] = ResponseMessageToJson(McpServer.EnsureUnifiedHmiScreenItem(hmiSoftwarePath, screenName, buttonName, "Button", 40, 40, 160, 56, "Start"));
 
                 var build = McpServer.BuildUnifiedHmiButtonActionScript(actionKind, eventType, tagName);

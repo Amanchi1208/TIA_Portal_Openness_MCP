@@ -1,5 +1,15 @@
 # Change Log
 
+## [0.0.39] - 2026-06-01
+
+### Stability-first public project generation
+
+- `PlcBuildAndImport` response now includes `CapabilityDecision`, `CapabilityWarnings`, and `RecommendedNextActions`. Complex SCL-like expressions are surfaced during dry-run as `external-scl-recommended`, so clients can choose native `.scl/.s7dcl` templates instead of forcing the narrow XML DSL into TIA compile errors.
+- `ApplyUnifiedHmiScreenDesignJson` now supports `strict=true` by default. Unsupported property/text writes fail the tool instead of reporting a false successful HMI layout.
+- Unified HMI design JSON now has a small stable property guard for generated controls. For example, Rectangle text/foreground/font writes are rejected with guidance to use a separate `HmiText` item; IOField ad-hoc process-value writes are redirected to `BindUnifiedHmiTagDynamization`.
+- `EnsureUnifiedHmiTag` now verifies HMI tag binding readback by default. Stable generation requires `SymbolicVerified` or `AbsoluteVerified`; internal-only/unverified tags fail with readback details and guidance. Internal HMI-only validation probes can explicitly set `requireVerifiedBinding=false`.
+- Version bumped to `0.0.39` on both V20/V21 builds and the package manifest.
+
 ## [0.0.38] - 2026-05-31
 
 ### PLC SCL 生成可靠性 — 消除「表达式被当成单变量名」这一类编译故障

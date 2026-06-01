@@ -1,4 +1,4 @@
-# TIA Portal MCP 完整交付包（**v0.0.36** / V20+V21 + S7DCL）
+# TIA Portal MCP 完整交付包（**v0.0.39** / V20+V21 + S7DCL）
 
 [English](README.en.md) · **中文**
 
@@ -13,6 +13,7 @@
 
 **本次更新（相对 20260512 包）**
 
+- **稳定生成硬门槛（v0.0.39）**：基于 v0.0.38，`PlcBuildAndImport` 会返回 `CapabilityDecision` / `CapabilityWarnings` / `RecommendedNextActions`；`ApplyUnifiedHmiScreenDesignJson(strict=true)` 默认遇到 HMI 属性写入失败即报错；`EnsureUnifiedHmiTag(requireVerifiedBinding=true)` 默认要求读回 `SymbolicVerified` 或 `AbsoluteVerified`，避免“生成成功但变量未真实链接”的公开版体验问题。
 - **双版本支持（V20 + V21）**：包内含两个 exe — `bin/Release/net48/TiaMcpServer.exe`（V21 编译）与 `bin-v20/Release/net48/TiaMcpServer.exe`（V20 编译）。
   - 二者**必须分别使用**，不能互换：V21 用 split DLL（`Siemens.Engineering.Base/Step7/...`），V20 用单体 `Siemens.Engineering.dll`，IL 层面绑定不同。
   - 两份 exe 都接受新 CLI 参数 `--tia-portal-location <path>`，配合 `--tia-major-version <20|21>` 用于非标准安装位置。

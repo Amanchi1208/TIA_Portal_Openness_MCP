@@ -100,9 +100,12 @@
                       "method":  "ApplyUnifiedHmiScreenDesignJson",
                       "returnType":  "ResponseMessage",
                       "parameters":  [
-
+                                         "hmiSoftwarePath",
+                                         "screenName",
+                                         "designJson",
+                                         "strict"
                                      ],
-                      "description":  "[L2][HMI-Unified] PREFERRED for natural-language HMI design. Apply a complete JSON layout spec to a screen in one call: screen size + multiple controls (Button/Rectangle/IOField) with positions, text, and properties. Requires: Connect + OpenProject + EnsureUnifiedHmiScreen. Better than calling EnsureUnifiedHmiScreenItem multiple times. Use BuildUnifiedHmiLayoutDesignJson to generate the JSON from a grid description."
+                      "description":  "[L2][HMI-Unified] PREFERRED for natural-language HMI design. Apply a complete JSON layout spec to a screen in one call: screen size + multiple controls (Button/Rectangle/IOField) with positions, text, and properties. Requires: Connect + OpenProject + EnsureUnifiedHmiScreen. strict=true fails when any property/text write fails; use false only for legacy best-effort probes."
                   },
                   {
                       "name":  "ApplyUnifiedHmiTheme",
@@ -731,9 +734,10 @@
                                          "plcName",
                                          "plcTag",
                                          "connectionName",
-                                         "address"
+                                         "address",
+                                         "requireVerifiedBinding"
                                      ],
-                      "description":  "[L2][HMI-Unified] Create or verify a Unified HMI external tag. Use plcTag for symbolic DB member diagnostics and address for the verified runtime PLC address (for this delivery blueprint: DB_HMI_Interface at DB200, Standard access, e.g. %DB200.DBX0.0). Requires EnsureUnifiedHmiConnection and EnsureUnifiedHmiTagTable."
+                      "description":  "[L2][HMI-Unified] Create or verify a Unified HMI external tag. Use plcTag for symbolic DB member diagnostics and address for the verified runtime PLC address (for this delivery blueprint: DB_HMI_Interface at DB200, Standard access, e.g. %DB200.DBX0.0). requireVerifiedBinding=true requires readback as SymbolicVerified or AbsoluteVerified. Requires EnsureUnifiedHmiConnection and EnsureUnifiedHmiTagTable."
                   },
                   {
                       "name":  "EnsureUnifiedHmiTagTable",

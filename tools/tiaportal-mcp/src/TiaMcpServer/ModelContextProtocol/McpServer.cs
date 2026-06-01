@@ -2110,11 +2110,12 @@ namespace TiaMcpServer.ModelContextProtocol
             [Description("plcName: PLC name for symbolic binding")] string plcName = "PLC_1",
             [Description("plcTag: PLC tag name/path; empty means same as tagName")] string plcTag = "",
             [Description("connectionName: HMI connection name; empty keeps current/auto")] string connectionName = "",
-            [Description("address: optional absolute PLC address, e.g. %DB200.DBX0.0. When supplied it is written as the verified HMI runtime address while plcTag remains available as the symbolic reference.")] string address = "")
+            [Description("address: optional absolute PLC address, e.g. %DB200.DBX0.0. When supplied it is written as the verified HMI runtime address while plcTag remains available as the symbolic reference.")] string address = "",
+            [Description("requireVerifiedBinding: stable public generation should keep this true. Set false only for intentional internal HMI-only tags used by local validation/probes.")] bool requireVerifiedBinding = true)
         {
             try
             {
-                return Portal.EnsureUnifiedHmiTag(hmiSoftwarePath, tagTableName, tagName, hmiDataType, plcName, plcTag, connectionName, address);
+                return Portal.EnsureUnifiedHmiTag(hmiSoftwarePath, tagTableName, tagName, hmiDataType, plcName, plcTag, connectionName, address, requireVerifiedBinding);
             }
             catch (Exception ex) when (ex is not McpException)
             {
@@ -2166,11 +2167,12 @@ namespace TiaMcpServer.ModelContextProtocol
         public static ResponseMessage ApplyUnifiedHmiScreenDesignJson(
             [Description("hmiSoftwarePath: path to HMI software (e.g. 'HMI_RT_1')")] string hmiSoftwarePath,
             [Description("screenName: target screen name")] string screenName,
-            [Description("designJson: JSON object with optional screen properties and items array")] string designJson)
+            [Description("designJson: JSON object with optional screen properties and items array")] string designJson,
+            [Description("strict: true fails the tool when any property/text write fails; false keeps legacy best-effort behavior.")] bool strict = true)
         {
             try
             {
-                return Portal.ApplyUnifiedHmiScreenDesignJson(hmiSoftwarePath, screenName, designJson);
+                return Portal.ApplyUnifiedHmiScreenDesignJson(hmiSoftwarePath, screenName, designJson, strict);
             }
             catch (Exception ex) when (ex is not McpException)
             {
@@ -2405,6 +2407,7 @@ namespace TiaMcpServer.ModelContextProtocol
             try
             {
                 var normalizedKind = NormalizePlcBuildKind(kind);
+                var capability = AnalyzePlcBuildCapability(normalizedKind, json);
                 var build = BuildPlcArtifact(normalizedKind, json);
                 var xml = build["xml"]?.ToString() ?? "";
                 var objectName = ResolveBuiltPlcObjectName(xml);
@@ -2441,6 +2444,9 @@ namespace TiaMcpServer.ModelContextProtocol
                     failed,
                     compile);
                 response.BuildKind = normalizedKind;
+                response.CapabilityDecision = capability.Decision;
+                response.CapabilityWarnings = capability.Warnings;
+                response.RecommendedNextActions = capability.NextActions;
                 response.GeneratedDirectory = tempDir;
                 response.WrittenFiles = new[] { xmlPath };
                 response.Message = dryRun
@@ -2450,6 +2456,9 @@ namespace TiaMcpServer.ModelContextProtocol
                 response.Meta["offlineBuildOk"] = build["ok"]?.GetValue<bool>() == true;
                 response.Meta["classifiedKind"] = classifiedKind;
                 response.Meta["classifiedSubKind"] = subKind;
+                response.Meta["capabilityDecision"] = capability.Decision;
+                response.Meta["capabilityWarnings"] = new JsonArray(capability.Warnings.Select(x => (JsonNode)x).ToArray());
+                response.Meta["recommendedNextActions"] = new JsonArray(capability.NextActions.Select(x => (JsonNode)x).ToArray());
                 return response;
             }
             catch (Exception ex) when (ex is not McpException)
@@ -2584,6 +2593,90 @@ namespace TiaMcpServer.ModelContextProtocol
                 "fb" => PlcBuilderToolJson.ComposeFbBlock(json),
                 _ => throw new ArgumentException("Unsupported PLC build kind: " + kind)
             };
+        }
+
+        private sealed class PlcBuildCapabilityDecision
+        {
+            public string Decision { get; set; } = "xml-dsl";
+            public List<string> Warnings { get; } = new();
+            public List<string> NextActions { get; } = new();
+        }
+
+        private static PlcBuildCapabilityDecision AnalyzePlcBuildCapability(string kind, string json)
+        {
+            var result = new PlcBuildCapabilityDecision();
+            if (kind != "fc" && kind != "fb")
+            {
+                result.Decision = "declaration-xml";
+                result.NextActions.Add("Import generated declaration XML in dependency order, then run CompileAndDiagnosePlc.");
+                return result;
+            }
+
+            JsonObject? root = null;
+            try
+            {
+                root = JsonNode.Parse(json) as JsonObject;
+            }
+            catch
+            {
+                result.Warnings.Add("PLC JSON could not be parsed for capability analysis; builder will still validate the schema.");
+                result.NextActions.Add("Fix JSON parsing/schema errors before importing into TIA Portal.");
+                return result;
+            }
+
+            var structuredText = root?["structuredText"] as JsonObject;
+            var operations = structuredText?["operations"] as JsonArray;
+            if (operations == null)
+            {
+                if (root?["structuredTextInnerXml"] != null || root?["structuredTextXml"] != null || root?["sclInnerXml"] != null)
+                {
+                    result.Decision = "raw-structuredtext-xml";
+                    result.Warnings.Add("Raw StructuredText XML was supplied. This path is only safe when cloned from a TIA export or generated by a verified builder.");
+                    result.NextActions.Add("Dry-run first, import into a disposable project, then require CompileAndDiagnosePlc errors=0.");
+                }
+                return result;
+            }
+
+            var risky = new List<string>();
+            for (var i = 0; i < operations.Count; i++)
+            {
+                if (operations[i] is not JsonObject op) continue;
+                foreach (var name in new[] { "condition", "source", "sym", "name" })
+                {
+                    if (op[name] is JsonNode n && LooksLikeSclExpression(n.ToString()))
+                        risky.Add($"$.structuredText.operations[{i}].{name}='{n}'");
+                }
+            }
+
+            if (risky.Count > 0)
+            {
+                result.Decision = "external-scl-recommended";
+                result.Warnings.Add("The PLC XML DSL is intentionally narrow. Complex SCL expressions were detected: " + string.Join("; ", risky.Take(8)));
+                result.NextActions.Add("Prefer a native .scl/.s7dcl external source and import via ImportFromDocuments/ImportBlocksFromDocuments, or use a verified SCL template from templates/plc/scl-examples.");
+                result.NextActions.Add("If you still use XML DSL, split expressions into verified primitive operations and run dryRun=true plus CompileAndDiagnosePlc.");
+            }
+            else
+            {
+                result.NextActions.Add("Run dryRun=true first, then import with compileAfter=true and require CompileAndDiagnosePlc errors=0.");
+            }
+
+            return result;
+        }
+
+        private static bool LooksLikeSclExpression(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            var s = value.Trim();
+            if (s.StartsWith("\"", StringComparison.Ordinal) && s.EndsWith("\"", StringComparison.Ordinal)) return false;
+            if (s.StartsWith("#", StringComparison.Ordinal)) s = s.Substring(1);
+            if (string.Equals(s, "TRUE", StringComparison.OrdinalIgnoreCase) || string.Equals(s, "FALSE", StringComparison.OrdinalIgnoreCase)) return true;
+            return s.Any(IsComplexSclToken);
+        }
+
+        private static bool IsComplexSclToken(char ch)
+        {
+            return char.IsWhiteSpace(ch) || ch == '(' || ch == ')' || ch == '+' || ch == '-' || ch == '*' || ch == '/' ||
+                   ch == '<' || ch == '>' || ch == '=' || ch == ':' || ch == ';' || ch == ',';
         }
 
         private static string ResolveBuiltPlcObjectName(string xml)
