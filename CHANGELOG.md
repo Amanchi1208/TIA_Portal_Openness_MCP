@@ -7,7 +7,8 @@
 - **新增只读工具 `ExportDeviceAml`**：导出设备硬件组态为 AutomationML(CAx) `.aml`，内含**组态 IP / 子网 / 网关 / PROFINET 设备名**——补上 `GetDeviceItemNetworkInfo` 读不到已组态 IP 的缺口。真机验证（江夏 安全PLC / S7-1200 station_3）：读出 IP=192.168.0.32 / 网关 .254 / 掩码 255.255.255.0。
 - **修复块路径解析**：`GetBlockInfo` 等对根级块自动跳过开头的 `Program blocks`/`程序块` 根容器段——裸名 `FR12E02v2` 与带前缀 `Program blocks/FR12E02v2` 现在都能命中（此前加前缀报 "Block not found"）。真机验证通过。
 - **`softwarePath` 容错解析**：精确匹配失败时自动兜底——容忍多余空格/大小写、单 PLC 工程任意 token 自动认到唯一 PLC、唯一子串匹配（`"PLC"`→`"PLC_1"`、`"安全"`→`"安全PLC"`）；仍无法解析时列表工具（`GetPlcTagTables`/`GetPlcExternalSources`/`GetPlcWatchTables`）报错附 `Available PLC paths: …`。纯匹配逻辑 `Guard.MatchPlcName` 16 个离线用例全过。
-- **文档诚实化**：§13 下载 V21 转换 bug 从"已修复"更正为**"已知问题，用 TIA UI 兜底"**（代码实为未修，roadmap 列 P0）；对标表、roadmap、verify 文档同步纠正。
+- **下载 V21 cast bug 修复 + 真机验证**：`DownloadToPlc` 旧版在 V21 报"ConnectionConfiguration 无法转换为 IConfiguration"。修复：导航到 `ConfigurationTargetInterface`（它才是 IConfiguration）并应用路由；修正 StopModules 选择枚举为 `StopAll`（旧值"StopModule"不存在→每次下载"unhandled"中止）；反射异常解包显示真实原因。**真机验证（江夏 安全PLC / S7-1200）：state=Success，0 错**。
+- **文档诚实化**：本轮先发现上一轮未提交文档把"下载已修复"等写在了代码之前，已逐处核对——softwarePath 容错按代码兑现、下载按真机验证转正，措辞与代码/真机一致。
 - 工具数 189 → 190（仅新增 `ExportDeviceAml`）。
 
 ## [2.2.4] - 2026-06-15 - 一键配置：把 MCP 注册进 AI 宿主，零手改 JSON

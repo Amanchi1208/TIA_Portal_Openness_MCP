@@ -966,27 +966,32 @@ handler, then runs SyntaxCheck.
 End-to-end recipe (Connect → tags → screen → design → button actions → Save)
 matches **§12** in this file; exercise it on your own Unified RT project.
 
-## 13. Real download — V21 cast bug (KNOWN ISSUE, not yet fixed — use the TIA UI)
+## 13. Real download — V21 cast bug (FIXED 2026-06-17, verified on a real CPU)
 
-`DownloadToPlc(softwarePath=…)` currently fails on V21 with:
+`DownloadToPlc(softwarePath=…)` used to fail on V21 with:
 
 ```
 类型 "Siemens.Engineering.Connection.ConnectionConfiguration" 的对象
 无法转换为类型 "Siemens.Engineering.Connection.IConfiguration"
 ```
 
-Root cause: `Portal.cs::DownloadToPlc` invokes `Download(IConfiguration,…)` via
-reflection but passes the raw `ConnectionConfiguration` from
-`DownloadProvider.Configuration`, which V21 no longer makes castable to
-`IConfiguration`. **This is not fixed in code yet.** A proper fix must pre-apply a
-network route (`Configuration.Modes[].PcInterfaces[].TargetInterfaces[]` +
-`ApplyConfiguration`) before the invoke. Tracked as P0 in
-`docs/server-maturity-roadmap.md`.
+Root cause + fix in `Portal.cs::DownloadToPlc` (each step verified against the V21 PublicAPI):
+1. **Cast**: `ConnectionConfiguration` does NOT implement `IConfiguration`, but a
+   `ConfigurationTargetInterface` (`Modes → PcInterfaces → TargetInterfaces`) DOES.
+   `TrySelectDownloadTargetInterface` navigates to the first target and passes it to
+   `Download()`. (⚠ auto-selects the FIRST PG/PC interface — on a multi-NIC PC confirm the adapter.)
+2. **Stop prompt**: `StopModulesSelections` is `{ NoAction, StopAll }`; the handler used a
+   non-existent `"StopModule"` that silently parsed to nothing, leaving the prompt "unhandled"
+   and aborting every download. Fixed to `StopAll`.
+3. Reflection-invoke failures are now unwrapped (`TargetInvocationException`) so the caller sees
+   the real reason.
 
-**Workaround: perform the actual CPU download from the TIA Portal UI.**
-`CheckDownloadReadiness` still works and is useful — but it is project-side only
-(`ready=true` ⇒ blocks consistent + a network configuration exists; it does **not**
-mean the CPU is reachable — check `GetOnlineState.isReachable`).
+**Verified 2026-06-17 on a real S7-1200 (江夏 安全PLC): `DownloadToPlc` →
+`state=Success, 0 errors` (stop → download existing program → restart).**
+
+`CheckDownloadReadiness` is project-side only (`ready=true` ⇒ blocks consistent + a network
+configuration exists). Note `GetOnlineState` reports the TIA **online-monitoring** session, not
+raw reachability, so it can read `Offline` even when a download succeeds.
 
 ## 14. SCL external source files (`DeletePlcExternalSource` / `ImportPlcExternalSource` / `GenerateBlocksFromExternalSource`)
 
@@ -1098,7 +1103,7 @@ Honest scope so you don't over-promise. Quote this when a user asks "can it do X
 | LAD authoring (S7DCL text) | ✅ verified (§9a) | ✅ (text LAD) | ✅ (S7DCL) |
 | Unified HMI design JSON + bindings | ✅ (§12) | ✅ | ✅ (JSON screens) |
 | OPC UA read (live values, monitoring) | ✅ read-only (`ReadPlcLiveValuesOpcUa`) | ✅ | ✅ browser+subscribe+trend |
-| Download to CPU | ❌ known issue, use TIA UI (§13) | ✅ | ✅ |
+| Download to CPU | ✅ fixed, verified on real CPU (§13) | ✅ | ✅ |
 | **Safety F-block author / compile / signature** | ❌ **gap** (§4; roadmap) | ✅ full | ✅ full |
 | **PLCSIM simulation / unit testing** | ❌ **gap** (roadmap) | ✅ simulate | ✅ PLCSIM Advanced tests |
 | Native Git / VCI | ❌ (text-export workaround §16) | ✅ Git+CI | ✅ full Git UI |

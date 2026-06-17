@@ -26,8 +26,8 @@ Status date: 2026-06-16.
   ```
   All read-only; no writes.
 
-## 2. Download to a V21 CPU — KNOWN ISSUE (not fixed)
+## 2. Download to a V21 CPU — FIXED (verified on a real CPU 2026-06-17)
 
-`DownloadToPlc` still throws the `ConnectionConfiguration` → `IConfiguration` cast on
-V21 (see SKILL.md §13). Use the TIA Portal UI for the actual CPU download. A proper
-fix is tracked as P0 in `docs/server-maturity-roadmap.md`.
+`DownloadToPlc` works on V21: the cast is resolved (a `ConfigurationTargetInterface` is the
+`IConfiguration`) and the StopModules prompt is handled (`StopAll`). Verified end-to-end on a
+real S7-1200 (安全PLC) → `state=Success, 0 errors` (stop → download → restart). See SKILL.md §13.

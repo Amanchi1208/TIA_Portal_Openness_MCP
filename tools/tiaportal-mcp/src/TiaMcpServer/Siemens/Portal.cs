@@ -10649,8 +10649,14 @@ namespace TiaMcpServer.Siemens
 
                 DownloadConfigurationDelegate postDelegate = (config) => { };
 
-                // ConnectionConfiguration does not implicitly satisfy IConfiguration at
-                // compile time in this binding, so invoke via reflection at runtime.
+                // V21 fix: ConnectionConfiguration does NOT implement IConfiguration, but a
+                // ConfigurationTargetInterface (Modes -> PcInterfaces -> TargetInterfaces) DOES.
+                // Select a target interface (applying its route) and pass THAT to Download();
+                // fall back to the raw configuration if no route is selectable.
+                object? downloadConfig = TrySelectDownloadTargetInterface(configuration) ?? configuration;
+
+                // Resolve the 4-arg overload Download(IConfiguration, pre, post, DownloadOptions)
+                // and invoke via reflection (the parameter is typed IConfiguration).
                 var downloadMethod = downloadProvider.GetType()
                     .GetMethods(BindingFlags.Public | BindingFlags.Instance)
                     .FirstOrDefault(m =>
@@ -10670,7 +10676,7 @@ namespace TiaMcpServer.Siemens
 
                 var rawResult = downloadMethod.Invoke(
                     downloadProvider,
-                    new object[] { configuration, preDelegate, postDelegate, DownloadOptions.Software });
+                    new object[] { downloadConfig!, preDelegate, postDelegate, DownloadOptions.Software });
 
                 if (rawResult is not DownloadResult result)
                     return new ResponseDownload { Ok = false, Message = "Download returned an unexpected result type." };
@@ -10679,14 +10685,76 @@ namespace TiaMcpServer.Siemens
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "DownloadToPlc failed for {SoftwarePath}", softwarePath);
+                // The Download call is invoked via reflection, so a real failure arrives wrapped in
+                // TargetInvocationException ("调用的目标发生了异常"). Unwrap it so the caller sees the
+                // actual reason (connection/route error, not-reachable CPU, etc.).
+                var real = ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null
+                    ? tie.InnerException : ex;
+                _logger?.LogError(real, "DownloadToPlc failed for {SoftwarePath}", softwarePath);
                 return new ResponseDownload
                 {
                     Ok = false,
-                    Message = $"Download failed: {ex.Message}",
-                    Errors = new[] { ex.Message }
+                    Message = $"Download failed: {real.Message}",
+                    Errors = new[] { real.Message }
                 };
             }
+        }
+
+        // V21: ConnectionConfiguration.ApplyConfiguration(ConfigurationTargetInterface) returns the
+        // IConfiguration that DownloadProvider.Download() requires. Navigate
+        // Modes -> PcInterfaces -> TargetInterfaces, pick the first target, and apply it. Returns the
+        // applied IConfiguration, or null when no route is selectable (caller falls back to the raw
+        // configuration). NOTE: picks the FIRST PG/PC interface — on a multi-NIC PC confirm the
+        // adapter facing the CPU.
+        private static object? TrySelectDownloadTargetInterface(object? connectionConfiguration)
+        {
+            if (connectionConfiguration == null) return null;
+            try
+            {
+                // ConnectionConfiguration.ApplyConfiguration(ConfigurationTargetInterface) returns a
+                // bool (whether the online route applied) — it does NOT return the IConfiguration.
+                // The ConfigurationTargetInterface itself IS an IConfiguration (verified against the
+                // V21 PublicAPI), so we return the target and pass it to Download().
+                var applyMethod = connectionConfiguration.GetType()
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(m => m.Name == "ApplyConfiguration"
+                        && m.GetParameters().Length == 1
+                        && m.GetParameters()[0].ParameterType.Name == "ConfigurationTargetInterface");
+
+                object? firstTarget = null;
+                foreach (var mode in EnumerateReflectedProperty(connectionConfiguration, "Modes"))
+                    foreach (var pcInterface in EnumerateReflectedProperty(mode, "PcInterfaces"))
+                        foreach (var target in EnumerateReflectedProperty(pcInterface, "TargetInterfaces"))
+                        {
+                            if (target == null) continue;
+                            firstTarget ??= target;
+                            // Prefer a target whose route applies cleanly; ApplyConfiguration is best-effort.
+                            try
+                            {
+                                if (applyMethod?.Invoke(connectionConfiguration, new[] { target }) is bool ok && ok)
+                                    return target;
+                            }
+                            catch { }
+                        }
+                return firstTarget; // a ConfigurationTargetInterface (implements IConfiguration)
+            }
+            catch { }
+            return null;
+        }
+
+        // Read a property by name and materialize it as a sequence (Openness compositions are
+        // IEnumerable). Materialized inside try/catch so a throwing enumerator can't escape.
+        private static List<object?> EnumerateReflectedProperty(object? owner, string propertyName)
+        {
+            var items = new List<object?>();
+            try
+            {
+                var value = owner?.GetType().GetProperty(propertyName)?.GetValue(owner);
+                if (value is System.Collections.IEnumerable en)
+                    foreach (var item in en) items.Add(item);
+            }
+            catch { }
+            return items;
         }
 
         public ResponseCheckDownload CheckDownloadReadiness(string softwarePath)
@@ -10761,9 +10829,18 @@ namespace TiaMcpServer.Siemens
             switch (typeName)
             {
                 case "StopModules":
+                    // StopModulesSelections = { NoAction, StopAll } — NOT "StopModule" (verified
+                    // against V21 PublicAPI; the old value parsed to nothing and left the prompt
+                    // "unhandled", which aborted every download).
+                    DownloadConfigSetSelection(config, stopBeforeDownload ? "StopAll" : "NoAction");
+                    break;
+
                 case "StopHSystemOrModule":
-                case "StopHSystem":
                     DownloadConfigSetSelection(config, stopBeforeDownload ? "StopModule" : "NoAction");
+                    break;
+
+                case "StopHSystem":
+                    DownloadConfigSetSelection(config, stopBeforeDownload ? "StopHSystem" : "NoAction");
                     break;
 
                 case "StartModules":

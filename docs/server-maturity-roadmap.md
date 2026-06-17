@@ -12,18 +12,14 @@ browser, encrypted vault, Git UI). See SKILL.md §18 for the full matrix.
 
 ## P0 — Finish what's started
 
-### 0. Fix the V21 download cast bug
-- **What:** `DownloadToPlc` still fails on V21 with the `ConnectionConfiguration` →
-  `IConfiguration` cast (SKILL.md §13). It is **not fixed** — the method still passes the
-  raw `DownloadProvider.Configuration` to the reflected `Download(IConfiguration,…)`.
-- **Why:** download-to-CPU is table stakes; every competitor has it.
-- **First step:** pre-apply a network route (`Configuration.Modes[].PcInterfaces[]
-  .TargetInterfaces[]` + `ApplyConfiguration`) before the invoke; if the cast is still
-  rejected, retry with a null connection arg once the route is applied. Decide whether
-  multi-NIC selection needs a `targetInterfaceName` parameter instead of "first available".
-  Verify on a machine with a reachable CPU:
-  `CheckDownloadReadiness → GetOnlineState → DownloadToPlc`.
-- **Effort:** M (implement + runtime-verify).
+### 0. Fix the V21 download cast bug — DONE (2026-06-17)
+- **What:** `DownloadToPlc` failed on V21 with the `ConnectionConfiguration` → `IConfiguration`
+  cast (SKILL.md §13). **Fixed:** navigate to a `ConfigurationTargetInterface` (the actual
+  `IConfiguration`) via `Modes → PcInterfaces → TargetInterfaces` and pass it to `Download()`;
+  also fixed the `StopModules` selection (`StopAll`, not the non-existent "StopModule").
+- **Verified:** end-to-end on a real S7-1200 (江夏 安全PLC) → `state=Success, 0 errors`.
+- **Follow-up (optional):** the route auto-selects the FIRST PG/PC interface — add a
+  `targetInterfaceName` parameter if multi-NIC selection becomes a problem.
 
 ---
 
