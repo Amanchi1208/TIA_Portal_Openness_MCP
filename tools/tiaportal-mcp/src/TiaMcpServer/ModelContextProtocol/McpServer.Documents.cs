@@ -185,18 +185,39 @@ namespace TiaMcpServer.ModelContextProtocol
                     var duration = (DateTime.Now - startTime).TotalSeconds;
                     Logger?.LogInformation($"Document export completed: {processedCount} blocks exported in {duration:F2} seconds");
 
+                    // Surface per-block skip/failure reasons so a "matched N but exported 0" is never silent.
+                    var failures = Portal.LastExportAsDocumentsFailures;
+                    var skipped = totalBlocks - processedCount;
+                    var msg = $"Document export completed: {processedCount}/{totalBlocks} blocks (regex '{regexName}') from '{softwarePath}' to '{exportPath}'";
+                    if (skipped > 0)
+                    {
+                        var reason = (failures != null && failures.Count > 0)
+                            ? string.Join("; ", failures)
+                            : "no reason captured (inconsistent block? compile first, or the block type/language may not support SIMATIC SD export — try ExportBlock for XML)";
+                        msg += $". {skipped} not exported: {reason}";
+                    }
+
+                    var meta = new JsonObject
+                    {
+                        ["timestamp"] = DateTime.Now,
+                        ["success"] = processedCount > 0 || totalBlocks == 0,
+                        ["totalBlocks"] = totalBlocks,
+                        ["exportedBlocks"] = processedCount,
+                        ["skippedBlocks"] = skipped,
+                        ["duration"] = duration
+                    };
+                    if (failures != null && failures.Count > 0)
+                    {
+                        var arr = new JsonArray();
+                        foreach (var f in failures) arr.Add(f);
+                        meta["failures"] = arr;
+                    }
+
                     return new ResponseExportBlocksAsDocuments
                     {
-                        Message = $"Document export completed: {processedCount} blocks with regex '{regexName}' exported from '{softwarePath}' to '{exportPath}'",
+                        Message = msg,
                         Items = responseList,
-                        Meta = new JsonObject
-                        {
-                            ["timestamp"] = DateTime.Now,
-                            ["success"] = true,
-                            ["totalBlocks"] = totalBlocks,
-                            ["exportedBlocks"] = processedCount,
-                            ["duration"] = duration
-                        }
+                        Meta = meta
                     };
                 }
                 else

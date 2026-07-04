@@ -1,5 +1,15 @@
 # Change Log
 
+## [2.2.9] - 2026-07-04 - 文档导入健壮化：嵌套组不再失败/丢块号 + 真实错误上抛 + 导出失败原因可见
+
+真机排障中暴露的 SIMATIC SD 文档导入/导出缺陷，均在活工程(5T车)+测试PLC 实测修复：
+
+- **`ImportFromDocuments` 嵌套组导入失败 + 块被挪到根/重编号（真机咬到的 bug）**：
+  - 旧行为：带非根 `groupPath`（如 `01_手动控制/FB控制`）导入时，一旦 Openness 抛异常就被外层 catch **吞掉、只返回 false**，工具层只能报泛化的 `Failed importing X`；而 group 解析为 null 时会**静默改导到根组**，导致块从原分组挪到根、`AutoNumber` 把 FB21 改成 FB4。
+  - 新行为：① 组路径非空但解析不到 → 明确报错「Group path 'X' not found，用 GetSoftwareTree 查准确组名」，**绝不静默转根**；② 导入异常按类型上抛真实原因（`.s7dcl` 语法/类型、`.s7res` 与 S7_MLC 不匹配等）；③ 导入前记录原块号，Override 若把符号块重编号则**自动改回原号**，保持工程树与实例 DB 稳定。实测：嵌套组 Override 成功、块留原组、FB 号保号。
+- **`ExportBlocksAsDocuments` 静默返回 0 → 现在报出每个块的失败原因**：旧版把失败块收进内部 `failures` 列表却不返回，`totalBlocks>0 但 exportedBlocks=0` 看着像成功。现在响应 `meta` 带 `skippedBlocks`/`failures[]`，消息也写明。实测挖出真因：**含 STL 网络的块无法导出 SIMATIC SD**（Auto_SpeedSet 就是），提示改用 ExportBlock(XML)。
+- **验证**：V20/V21 双编译 0 错；bin-build exe 作第二 Openness 客户端连活工程实测 4 项全过（组不存在报错/嵌套组 Override 保号/导出失败原因可见/测试PLC 11 块全导出 0 误报）。
+
 ## [2.2.8] - 2026-07-03 - 弱模型档位回归 + Doctor 体检 + 写操作默认干跑 + VS Code schema 修复
 
 围绕「外部环境部署 + 弱 AI + 出错率」（lite 档位与 Doctor 此前只存在于 SKILL 文档、代码在迁仓时丢失，本版补齐并超越原实现）：

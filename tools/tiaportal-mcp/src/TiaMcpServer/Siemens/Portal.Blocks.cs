@@ -972,6 +972,12 @@ namespace TiaMcpServer.Siemens
         }
 
         // TIA portal crashes when exporting blocks as documents, :-(
+        /// <summary>
+        /// Per-block failure reasons from the most recent ExportBlocksAsDocuments call (empty on full success).
+        /// The tool layer surfaces this so a "totalBlocks &gt; 0 but exportedBlocks == 0" no longer looks silent.
+        /// </summary>
+        public IReadOnlyList<string> LastExportAsDocumentsFailures { get; private set; } = new List<string>();
+
         public IEnumerable<PlcBlock>? ExportBlocksAsDocuments(string softwarePath, string exportPath, string regexName = "", bool preservePath = false)
         {
             _logger?.LogInformation("Exporting blocks as documents...");
@@ -1119,6 +1125,7 @@ namespace TiaMcpServer.Siemens
                 _logger?.LogInformation($"ExportBlocksAsDocuments completed successfully. Exported {exportList.Count} blocks.");
             }
 
+            LastExportAsDocumentsFailures = failures;
             return exportList;
         }
 
@@ -1137,42 +1144,119 @@ namespace TiaMcpServer.Siemens
                 return false;
             }
 
+            var softwareContainer = GetSoftwareContainer(softwarePath);
+            if (!(softwareContainer?.Software is PlcSoftware plcSoftware))
+            {
+                throw new PortalException(PortalErrorCode.NotFound, $"PLC software '{softwarePath}' not found. Use GetProjectTree for the exact PLC name.");
+            }
+
+            var dir = new DirectoryInfo(importPath);
+            if (!dir.Exists)
+            {
+                throw new PortalException(PortalErrorCode.InvalidParams, $"Import directory does not exist: {importPath}");
+            }
+            if (!File.Exists(Path.Combine(importPath, fileNameWithoutExtension + ".s7dcl")))
+            {
+                throw new PortalException(PortalErrorCode.InvalidParams, $"No '{fileNameWithoutExtension}.s7dcl' found under {importPath}. importPath is the DIRECTORY holding the .s7dcl/.s7res, and fileNameWithoutExtension omits the extension.");
+            }
+
+            // Resolve the target group. Empty path = root. A non-empty path that does NOT resolve is a
+            // caller error — DO NOT silently retarget root (that is how a nested-group import used to
+            // land the block at root and get AutoNumber-renumbered).
+            PlcBlockGroup targetGroup;
+            if (string.IsNullOrWhiteSpace(groupPath))
+            {
+                targetGroup = plcSoftware.BlockGroup;
+            }
+            else
+            {
+                targetGroup = GetPlcBlockGroupByPath(softwarePath, groupPath)
+                    ?? throw new PortalException(PortalErrorCode.NotFound,
+                        $"Group path '{groupPath}' not found under PLC '{softwarePath}'. Use GetSoftwareTree for exact group names, or pass an empty groupPath to import at the root.");
+            }
+
+            // Capture the existing block's identity BEFORE import. Openness Override, when the block
+            // lives in a different group than the import target, deletes+recreates it (losing its
+            // number and original group). We restore the number afterwards so callers/instance DBs
+            // and the project tree stay stable.
+            var existing = FindBlockRecursive(plcSoftware.BlockGroup, fileNameWithoutExtension);
+            int? prevNumber = null;
+            bool prevAutoNumber = false;
+            try { if (existing != null) { prevNumber = existing.Number; prevAutoNumber = existing.AutoNumber; } } catch { }
+
+            DocumentImportResult? result;
             try
             {
-                var softwareContainer = GetSoftwareContainer(softwarePath);
-                if (softwareContainer?.Software is PlcSoftware plcSoftware)
-                {
-                    var group = GetPlcBlockGroupByPath(softwarePath, groupPath);
-                    var dir = new DirectoryInfo(importPath);
-                    if (!dir.Exists)
-                    {
-                        _logger?.LogWarning($"Import directory does not exist: {importPath}");
-                        return false;
-                    }
-
-                    DocumentImportResult? result = null;
-                    try
-                    {
-                        result = (group != null)
-                            ? group.Blocks.ImportFromDocuments(dir, fileNameWithoutExtension, option)
-                            : plcSoftware.BlockGroup.Blocks.ImportFromDocuments(dir, fileNameWithoutExtension, option);
-                    }
-                    catch (EngineeringNotSupportedException ex)
-                    {
-                        throw new PortalException(PortalErrorCode.ExportFailed, $"EngineeringNotSupportedException at file '{fileNameWithoutExtension}'. {ex.Message}", null, ex);
-                    }
-
-                    if (result != null && result.State == DocumentResultState.Success)
-                    {
-                        return true;
-                    }
-                }
+                result = targetGroup.Blocks.ImportFromDocuments(dir, fileNameWithoutExtension, option);
+            }
+            catch (EngineeringNotSupportedException ex)
+            {
+                throw new PortalException(PortalErrorCode.NotSupportedOnVersion, $"ImportFromDocuments not supported for '{fileNameWithoutExtension}': {ex.Message}", null, ex);
+            }
+            catch (EngineeringTargetInvocationException ex)
+            {
+                throw new PortalException(PortalErrorCode.ImportFailed, $"ImportFromDocuments failed for '{fileNameWithoutExtension}' into group '{(string.IsNullOrWhiteSpace(groupPath) ? "<root>" : groupPath)}': {ex.Message}. Check the .s7dcl syntax (types/attributes) and that .s7res matches the S7_MLC ids.", null, ex);
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error importing block from documents");
+                throw new PortalException(PortalErrorCode.ImportFailed, $"ImportFromDocuments failed for '{fileNameWithoutExtension}' into group '{(string.IsNullOrWhiteSpace(groupPath) ? "<root>" : groupPath)}': {ex.Message}", null, ex);
             }
-            return false;
+
+            if (result == null || result.State != DocumentResultState.Success)
+            {
+                throw new PortalException(PortalErrorCode.ImportFailed,
+                    $"ImportFromDocuments returned state '{result?.State.ToString() ?? "null"}' for '{fileNameWithoutExtension}'. The document set was not imported.");
+            }
+
+            // Restore the original block number if Override renumbered it (symbolic/optimized blocks
+            // are addressed by name, so this is cosmetic-but-important for a stable, diffable project).
+            if (prevNumber.HasValue)
+            {
+                var imported = FindBlockRecursive(plcSoftware.BlockGroup, fileNameWithoutExtension);
+                if (imported != null)
+                {
+                    try
+                    {
+                        if (imported.Number != prevNumber.Value)
+                        {
+                            imported.AutoNumber = false;
+                            imported.Number = prevNumber.Value;
+                        }
+                        else
+                        {
+                            imported.AutoNumber = prevAutoNumber;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex, $"Could not restore block number {prevNumber} for {fileNameWithoutExtension}");
+                    }
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Depth-first search for a block by exact name across all nested block groups.</summary>
+        private PlcBlock? FindBlockRecursive(PlcBlockGroup group, string blockName)
+        {
+            if (group == null)
+            {
+                return null;
+            }
+            var here = group.Blocks.Find(blockName);
+            if (here != null)
+            {
+                return here;
+            }
+            foreach (var sub in group.Groups)
+            {
+                var found = FindBlockRecursive(sub, blockName);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+            return null;
         }
 
         public IEnumerable<PlcBlock>? ImportBlocksFromDocuments(string softwarePath, string groupPath, string importPath, string regexName, ImportDocumentOptions option, bool preservePath = false)
